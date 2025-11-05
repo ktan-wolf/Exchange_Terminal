@@ -1,0 +1,53 @@
+
+# === Rust ===
+
+# Compiled files
+/target/
+**/target/
+
+# Debug and release builds
+debug/
+release/
+
+# Cargo package files
+Cargo.lock
+Cargo.toml.orig
+
+# Backup and temp files
+*.rs.bk
+*.swp
+*.swo
+*.tmp
+*.log
+
+# IDE / Editor specific
+.vscode/
+.idea/
+*.iml
+
+# OS specific
+.DS_Store
+Thumbs.db
+
+# Environment / Config files
+.env
+.env.*
+!.env.example
+
+# Coverage / Testing
+coverage/
+*.profraw
+*.profdata
+
+# Rustfmt backup
+**/*.rs.bk
+
+# Binaries
+*.exe
+*.dll
+*.so
+*.dylib
+*.out
+
+# Miscellaneous
+node_modules/
