@@ -1,74 +1,56 @@
 use super::state::PriceUpdate;
-use futures_util::{SinkExt, StreamExt};
-use rand;
-use serde_json::json;
+use futures_util::StreamExt;
+use serde::Deserialize;
 use tokio::sync::broadcast::Sender;
-use tokio::time::{Duration, sleep};
-use tokio_tungstenite::{connect_async, tungstenite::Message};
+use tokio_tungstenite::connect_async;
 
-const RAYDIUM_AMM_PROGRAM: &str = "AMM55ShkzCBXz9QWzLmfG7Vqvvuv9Wz7M8EYvFyyDpMx";
-const HELIUS_WS_URL: &str =
-    "wss://mainnet.helius-rpc.com/?api-key=7a025834-fd0a-4f62-9b34-6866d0e98eac";
+#[derive(Debug, Deserialize)]
+struct PythPriceMsg {
+    id: String,
+
+    #[serde(rename = "price")]
+    price: f64,
+
+    #[serde(rename = "conf")]
+    confidence: f64,
+
+    #[serde(rename = "ts")]
+    timestamp: u64,
+}
 
 pub async fn run_raydium_connector(tx: Sender<PriceUpdate>) {
-    println!("[Helius] connecting to Solana WS...");
+    // Pyth price feed for SOL/USD
+    let sol_feed = "J83w4HKfqZz8Q4yPDR5iXe9pnKtxY8a9oJG6p7f3XaCg";
 
-    let (ws_stream, _) = match connect_async(HELIUS_WS_URL).await {
-        Ok(res) => res,
-        Err(e) => {
-            eprintln!("[Helius] ❌ Failed to connect: {e:?}");
-            return;
-        }
-    };
+    let url = format!("wss://hermes.pyth.network/v2/updates?ids[]={}", sol_feed);
 
-    let (mut write, mut read) = ws_stream.split();
+    println!("[Raydium/Pyth] connecting : {}", url);
 
-    // Subscribe to Raydium AMM program updates
-    let sub_msg = json!({
-        "jsonrpc": "2.0",
-        "id": 1,
-        "method": "programSubscribe",
-        "params": [
-            RAYDIUM_AMM_PROGRAM,
-            { "encoding": "jsonParsed" }
-        ]
-    });
+    match connect_async(&url).await {
+        Ok((mut ws_stream, _)) => {
+            println!("[Raydium/Pyth] ✅ Connected");
 
-    if let Err(e) = write.send(Message::Text(sub_msg.to_string().into())).await {
-        eprintln!("[Helius] ❌ Failed to send subscription: {e:?}");
-        return;
-    }
+            while let Some(msg) = ws_stream.next().await {
+                if let Ok(msg) = msg {
+                    if msg.is_text() {
+                        let text = msg.to_text().unwrap();
 
-    println!("[Helius] ✅ Subscribed to Raydium AMM program");
-
-    let tx_clone = tx.clone();
-
-    // 🔁 Send fake prices periodically for testing
-    tokio::spawn(async move {
-        loop {
-            let fake_price = 120.0 + (rand::random::<f64>() * 10.0);
-            let _ = tx_clone.send(PriceUpdate {
-                source: "Raydium".into(),
-                pair: "SOL/USDC".into(),
-                price: fake_price,
-            });
-            //println!("[Helius] 🔔 Sent periodic update, price {:.2}", fake_price);
-            sleep(Duration::from_millis(300)).await;
-        }
-    });
-
-    // ✅ Still listen to real messages from Helius if any arrive
-    while let Some(msg) = read.next().await {
-        if let Ok(Message::Text(txt)) = msg {
-            if txt.contains("result") || txt.contains("notification") {
-                let fake_price = 120.0 + (rand::random::<f64>() * 10.0);
-                let _ = tx.send(PriceUpdate {
-                    source: "Raydium".into(),
-                    pair: "SOL/USDC".into(),
-                    price: fake_price,
-                });
-                //println!("[Helius] 🔔 Received WS update, price {:.2}", fake_price);
+                        if let Ok(parsed) = serde_json::from_str::<Vec<PythPriceMsg>>(text) {
+                            // Pyth sends a vector, we take the first element
+                            if let Some(price_msg) = parsed.first() {
+                                let _ = tx.send(PriceUpdate {
+                                    source: "Raydium".to_string(),
+                                    pair: "SOL/USDT".to_string(),
+                                    price: price_msg.price,
+                                });
+                            }
+                        }
+                    }
+                }
             }
         }
+
+        Err(e) => eprintln!("[Raydium/Pyth] ❌ Connection error: {:?}", e),
     }
 }
+
