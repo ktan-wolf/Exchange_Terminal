@@ -12,6 +12,7 @@ mod connectors;
 use connectors::{
     binance::run_binance_connector,
     jupiter::run_dex_connector, // <-- your combined DEX connector
+    raydium::run_raydium_connector,
     state::PriceUpdate,
 };
 
@@ -35,6 +36,12 @@ async fn main() {
         run_dex_connector(tx_dex).await;
     });
 
+    // 3️⃣ Start Raydium On-Chain Price Connector
+    //
+    let tx_raydium = tx.clone();
+    tokio::spawn(async move {
+        run_raydium_connector(tx_raydium).await;
+    });
 
     //
     // WebSocket route
