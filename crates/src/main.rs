@@ -1,80 +1,81 @@
+mod connectors;
+
 use axum::{
     Router,
     extract::ws::{Message, WebSocket, WebSocketUpgrade},
     response::IntoResponse,
     routing::get,
 };
+use connectors::{
+    arbitrage_engine::{ArbitrageEngine, ArbitrageFeed},
+    binance::run_binance_connector,
+    jupiter::run_dex_connector,
+    raydium::run_raydium_connector,
+    state::PriceUpdate,
+};
 use futures_util::{SinkExt, StreamExt};
 use std::net::SocketAddr;
 use tokio::{net::TcpListener, sync::broadcast};
 
-mod connectors;
-use connectors::{
-    binance::run_binance_connector,
-    jupiter::run_dex_connector, // <-- your combined DEX connector
-    raydium::run_raydium_connector,
-    state::PriceUpdate,
-};
-
 #[tokio::main]
 async fn main() {
-    let (tx, _rx) = broadcast::channel::<PriceUpdate>(200);
+    // Channel for PriceUpdate from connectors
+    let (tx_price, rx_price) = broadcast::channel::<PriceUpdate>(200);
 
-    //
-    // 1️⃣ Start Binance connector
-    //
-    let tx_binance = tx.clone();
-    tokio::spawn(async move {
-        run_binance_connector(tx_binance).await;
+    // Channel for ArbitrageFeed to WebSocket clients
+    let (tx_arb, _rx_arb) = broadcast::channel::<ArbitrageFeed>(200);
+
+    // Spawn connectors
+    tokio::spawn(run_binance_connector(tx_price.clone()));
+    tokio::spawn(run_dex_connector(tx_price.clone()));
+    tokio::spawn(run_raydium_connector(tx_price.clone()));
+
+    // Spawn arbitrage engine
+    tokio::spawn({
+        let tx_arb = tx_arb.clone();
+        async move {
+            let mut engine = ArbitrageEngine::new(tx_arb);
+            let mut rx_price = rx_price;
+
+            while let Ok(update) = rx_price.recv().await {
+                engine.process_price(update);
+            }
+        }
     });
 
-    //
-    // 2️⃣ Start DEX connector (Raydium + Jupiter inside this)
-    //
-    let tx_dex = tx.clone();
-    tokio::spawn(async move {
-        run_dex_connector(tx_dex).await;
-    });
-
-    // 3️⃣ Start Raydium On-Chain Price Connector
-    //
-    let tx_raydium = tx.clone();
-    tokio::spawn(async move {
-        run_raydium_connector(tx_raydium).await;
-    });
-
-    //
-    // WebSocket route
-    //
+    // WebSocket route for combined feed
     let app = Router::new().route(
-        "/ws",
+        "/ws/arb",
         get({
-            let tx = tx.clone();
-            move |ws: WebSocketUpgrade| ws_handler(ws, tx.clone())
+            let tx_arb = tx_arb.clone();
+            move |ws: WebSocketUpgrade| ws_handler(ws, tx_arb.clone())
         }),
     );
 
     let addr = SocketAddr::from(([127, 0, 0, 1], 8081));
-    println!("✅ Web3 Terminal backend running at ws://{addr}/ws");
+    println!("✅ Web3 Terminal Arbitrage feed running at ws://{addr}/ws/arb");
 
     let listener = TcpListener::bind(addr).await.unwrap();
     axum::serve(listener, app).await.unwrap();
 }
 
-async fn ws_handler(ws: WebSocketUpgrade, tx: broadcast::Sender<PriceUpdate>) -> impl IntoResponse {
+async fn ws_handler(
+    ws: WebSocketUpgrade,
+    tx: broadcast::Sender<ArbitrageFeed>,
+) -> impl IntoResponse {
     let rx = tx.subscribe();
     ws.on_upgrade(move |socket| handle_socket(socket, rx))
 }
 
-async fn handle_socket(mut socket: WebSocket, mut rx: broadcast::Receiver<PriceUpdate>) {
-    println!("⚡ Client connected");
+async fn handle_socket(mut socket: WebSocket, mut rx: broadcast::Receiver<ArbitrageFeed>) {
+    println!("⚡ Client connected to combined feed");
 
     let (mut sender, mut receiver) = socket.split();
 
-    // Send price updates to WebSocket
+    // Send updates
     tokio::spawn(async move {
-        while let Ok(update) = rx.recv().await {
-            if let Ok(json) = serde_json::to_string(&update) {
+        while let Ok(feed) = rx.recv().await {
+            if let Ok(json) = serde_json::to_string(&feed) {
                 if sender.send(Message::Text(json.into())).await.is_err() {
                     println!("❌ Client disconnected (send failed)");
                     break;
@@ -83,7 +84,7 @@ async fn handle_socket(mut socket: WebSocket, mut rx: broadcast::Receiver<PriceU
         }
     });
 
-    // Optional: Handle messages from the client
+    // Optional: receive messages from client
     while let Some(Ok(msg)) = receiver.next().await {
         if let Message::Text(txt) = msg {
             println!("💬 Client says: {txt}");

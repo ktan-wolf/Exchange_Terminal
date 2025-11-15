@@ -9,3 +9,6 @@ pub use jupiter::*;
 
 pub mod raydium;
 pub use raydium::*;
+
+pub mod arbitrage_engine;
+pub use arbitrage_engine::*;

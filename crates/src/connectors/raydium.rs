@@ -1,25 +1,21 @@
-
 use std::str::FromStr;
 
 use crate::connectors::state::PriceUpdate;
+use anyhow::Result;
+use solana_account_decoder::UiAccountEncoding;
 use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_sdk::pubkey::Pubkey;
-use solana_account_decoder::UiAccountEncoding;
 use tokio::sync::broadcast::Sender;
 use tokio::time::{Duration, sleep};
-use anyhow::Result;
 
 /// Pool state account (NOT LP mint)
-const RAYDIUM_POOL_ID: &str =
-    "58oQChx4yWmvKdwLLZzBi4ChoCc2fqCUWBkwMihLYQo2";
+const RAYDIUM_POOL_ID: &str = "58oQChx4yWmvKdwLLZzBi4ChoCc2fqCUWBkwMihLYQo2";
 
 /// Raydium SOL vault
-const SOL_VAULT: &str =
-    "DQyrAcCrDXQ7NeoqGgDCZwBvWDcYmFCjSb9JtteuvPpz";
+const SOL_VAULT: &str = "DQyrAcCrDXQ7NeoqGgDCZwBvWDcYmFCjSb9JtteuvPpz";
 
 /// Raydium USDC vault
-const USDC_VAULT: &str =
-    "HLmqeL62xR1QoZ1HKKbXRrdN1p3phKpxRMb2VVopvBBz";
+const USDC_VAULT: &str = "HLmqeL62xR1QoZ1HKKbXRrdN1p3phKpxRMb2VVopvBBz";
 
 /// Reads Raydium vault balances and computes SOL/USDC price
 
@@ -33,7 +29,7 @@ async fn fetch_raydium_price(rpc: &RpcClient) -> Result<f64> {
     let sol_raw = sol_acc.amount.parse::<f64>()?;
     let usdc_raw = usdc_acc.amount.parse::<f64>()?;
 
-    let sol = sol_raw / 1e9;   // SOL decimals
+    let sol = sol_raw / 1e9; // SOL decimals
     let usdc = usdc_raw / 1e6; // USDC decimals
 
     if sol == 0.0 {
@@ -43,7 +39,6 @@ async fn fetch_raydium_price(rpc: &RpcClient) -> Result<f64> {
     let price = usdc / sol;
     Ok(price)
 }
-
 
 /// Runs the Raydium price feed loop
 pub async fn run_raydium_connector(tx: Sender<PriceUpdate>) {
@@ -66,6 +61,6 @@ pub async fn run_raydium_connector(tx: Sender<PriceUpdate>) {
             }
         }
 
-        sleep(Duration::from_secs(2)).await;
+        //sleep(Duration::from_secs(2)).await;
     }
 }
